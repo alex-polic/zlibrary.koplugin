@@ -248,6 +248,22 @@ function KVCache:remove(key)
     return true
 end
 
+function KVCache:removePrefix(prefix)
+    if not (self._cache and type(self._cache.data) == "table" and type(prefix) == "string") 
+        then return false
+    end
+    for key in pairs(self._cache.data) do
+        if type(key) == "string" and key:sub(1, #prefix) == prefix
+            then self._cache:delSetting(key) end
+    end
+    if not next(self._cache.data) then
+        self:clear()
+    else
+        self._cache:flush()
+    end
+    return true
+end
+
 function KVCache:clear()
     if self._cache then 
         self._cache:purge() 

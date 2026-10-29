@@ -744,11 +744,109 @@ function Zlibrary:showMyBooksDialog(def_position, def_search_input)
                             end,
                             requires_auth = true,
                      }, page)
-                 end},
+                 end}, {
+                    -- After Downloaded: on_fetch_and_show retitles that tab by its position.
+                    text = T("Booklists"),
+                    cache_key = "booklists",
+                    cache_expiry = 86400,
+                    enable_pagination = false,
+                    rows = {
+                        show_cover = false,
+                        to_menu_item = function(booklist)
+                            return {
+                                text = booklist.name,
+                                mandatory = booklist.count and tostring(booklist.count),
+                                callback = function() self:showBooklistDialog(booklist) end,
+                            }
+                        end,
+                    },
+                    -- Passes fetch_generation on: every tab here fetches page 1, so the page check
+                    -- alone would let a slow booklists response land in the tab the user switched to.
+                    callback = function(widget, _, _, fetch_generation)
+                        self:_requestDispatcher({
+                            api_method = Api.getBooklists,
+                            loading_text_key = T("Getting your booklists..."),
+                            error_prefix_key = T("Failed to fetch booklists"),
+                            operation_name = T("Booklists"),
+                            log_context = "onShowBooklists",
+                            hasValidApiResult = function(api_result)
+                                local ok = type(api_result) == "table" and type(api_result.booklists) == "table"
+                                return ok, not ok and T("API returned an error, please try again")
+                            end,
+                            resolve_result = function(_, api_result)
+                                widget:setPaginationState(false, 1, fetch_generation)
+                                widget:reloadFromBookData(api_result.booklists, nil, nil, nil, fetch_generation)
+                                if #api_result.booklists == 0 then
+                                    Ui.showInfoMessage(T("You have no booklists yet"))
+                                end
+                            end,
+                            requires_auth = true,
+                        })
+                    end,
+                },
             }}
 
         self.dialog_manager:trackDialog(my_books_dialog)
         my_books_dialog:fetchAndShow()
+end
+
+-- One booklist's books, opened over My Books. A single tab hides the switch, so it is a plain paged list.
+function Zlibrary:showBooklistDialog(booklist)
+    local opts = Config.getViewSettings()
+    local booklist_dialog = MultiSearchDialog:new{
+        title = booklist.name,
+        -- Without it fetchAndShow treats the dialog as a search screen and opens the search input.
+        def_position = 1,
+        show_cover = opts.show_cover_browse ~= false,
+        list_per_page = opts.browse_per_page,
+        on_select_book_callback = function(book)
+            self:onSelectRecommendedBook(book)
+        end,
+        on_search_callback = function(def_input)
+            Ui.showSearchDialog(self, def_input)
+        end,
+        on_similar_books_callback = function(book)
+            self:searchSimilarBooks(book)
+        end,
+        on_download_book_callback = function(book)
+            self:downloadBook(book)
+        end,
+        toggle_items = { {
+            text = booklist.name,
+            cache_key = "booklist_" .. booklist.id,
+            cache_expiry = 86400,
+            enable_pagination = true,
+            callback = function(widget, page, _, fetch_generation)
+                self:_requestDispatcher({
+                    api_method = Api.getBooklistBooks,
+                    loading_text_key = T("Getting booklist books..."),
+                    error_prefix_key = T("Failed to fetch booklist books"),
+                    operation_name = T("Booklist books"),
+                    log_context = "onShowBooklistBooks",
+                    hasValidApiResult = function(api_result)
+                        local ok = type(api_result) == "table" and type(api_result.books) == "table"
+                        return ok, not ok and T("API returned an error, please try again")
+                    end,
+                    resolve_result = function(_, api_result)
+                        local current_page = page or 1
+                        widget:setPaginationState(api_result.has_more_results, current_page, fetch_generation)
+                        if current_page == 1 then
+                            widget:reloadFromBookData(api_result.books, nil, nil, nil, fetch_generation)
+                            if #api_result.books == 0 then
+                                Ui.showInfoMessage(T("This booklist is empty"))
+                            end
+                        else
+                            widget:appendBatchDataAndReload(api_result.books, fetch_generation)
+                        end
+                    end,
+                    requires_auth = true,
+                }, booklist.id, page)
+            end,
+        } },
+    }
+
+    self.dialog_manager:trackDialog(booklist_dialog)
+    booklist_dialog:fetchAndShow()
 end
 
 function Zlibrary:searchSimilarBooks(book_stub)
